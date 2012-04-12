@@ -4,9 +4,11 @@
  * 
  * Backbone-relational may be freely distributed under the MIT license.
  * For details and documentation: https://github.com/PaulUithol/Backbone-relational.
- * Depends on (as in, compeletely useless without) Backbone: https://github.com/documentcloud/backbone.
+ * Depends on Backbone: https://github.com/documentcloud/backbone.
  */
 ( function( undefined ) {
+	"use strict";
+	
 	/**
 	 * CommonJS shim
 	 **/
@@ -209,8 +211,34 @@
 			
 			return coll;
 		},
-		
-		find: function( type, id ) {
+
+		/**
+		 * Find an id
+		 * @param type
+		 * @param {String|Number|Object|Backbone.RelationalModel} item
+		 */
+		resolveIdForItem: function( type, item ) {
+			var id = _.isString( item ) || _.isNumber( item ) ? item : null;
+
+			if ( id == null ) {
+				if ( item instanceof Backbone.RelationalModel ) {
+					id = item.id;
+				}
+				else if ( _.isObject( item ) ) {
+					id = item[ type.prototype.idAttribute ];
+				}
+			}
+
+			return id;
+		},
+
+		/**
+		 *
+		 * @param type
+		 * @param {String|Number|Object|Backbone.RelationalModel} item
+		 */
+		find: function( type, item ) {
+			var id = this.resolveIdForItem( type, item );
 			var coll = this.getCollection( type );
             var model=false;
 
@@ -301,6 +329,7 @@
 		
 		this.key = this.options.key;
 		this.keySource = this.options.keySource || this.key;
+		this.keyDestination = this.options.keyDestination || this.options.keySource || this.key;
 
 		// 'exports' should be the global object where 'relatedModel' can be found on if given as a string.
 		this.relatedModel = this.options.relatedModel;
@@ -562,10 +591,10 @@
 			if ( item instanceof this.relatedModel ) {
 				model = item;
 			}
-			else if ( item && ( _.isString( item ) || _.isNumber( item ) || typeof( item ) === 'object' ) ) {
+			else if ( item ) {
 				// Try to find an instance of the appropriate 'relatedModel' in the store, or create it
-				var id = _.isString( item ) || _.isNumber( item ) ? item : item[ this.relatedModel.prototype.idAttribute ];
-				model = Backbone.Relational.store.find( this.relatedModel, id );
+				model = Backbone.Relational.store.find( this.relatedModel, item );
+
 				if ( model && _.isObject( item ) ) {
 					model.set( item, options );
 				}
@@ -644,8 +673,8 @@
 			options = this.sanitizeOptions( options );
 			
 			var item = this.keyContents;
-			if ( item && ( _.isString( item ) || _.isNumber( item ) || typeof( item ) === 'object' ) ) {
-				var id = _.isString( item ) || _.isNumber( item ) ? item : item[ this.relatedModel.prototype.idAttribute ];
+			if ( item ) {
+				var id = Backbone.Relational.store.resolveIdForItem( this.relatedModel, item );
 				if ( model.id === id ) {
 					this.addRelated( model, options );
 				}
@@ -679,7 +708,8 @@
 		options: {
 			reverseRelation: { type: 'HasOne' },
 			collectionType: Backbone.Collection,
-			collectionKey: true
+			collectionKey: true,
+			collectionOptions: {}
 		},
 		
 		initialize: function() {
@@ -694,17 +724,39 @@
 			if ( !this.collectionType.prototype instanceof Backbone.Collection.prototype.constructor ){
 				throw new Error( 'collectionType must inherit from Backbone.Collection' );
 			}
-			
-			this.setRelated( this.prepareCollection( new this.collectionType() ) );
+
+			// Handle cases where a model/relation is created with a collection passed straight into 'attributes'
+			if ( this.keyContents instanceof Backbone.Collection ) {
+				this.setRelated( this._prepareCollection( this.keyContents ) );
+			}
+			else {
+				this.setRelated( this._prepareCollection() );
+			}
+
 			this.findRelated( { silent: true } );
 		},
 		
-		prepareCollection: function( collection ) {
+		_getCollectionOptions: function() {
+		    return _.isFunction( this.options.collectionOptions ) ?
+				this.options.collectionOptions( this.instance ) :
+				this.options.collectionOptions;
+		},
+
+		/**
+		 * Bind events and setup collectionKeys for a collection that is to be used as the backing store for a HasMany.
+		 * If no 'collection' is supplied, a new collection will be created of the specified 'collectionType' option.
+		 * @param {Backbone.Collection} [collection]
+		 */
+		_prepareCollection: function( collection ) {
 			if ( this.related ) {
 				this.related
 					.unbind( 'relational:add', this.handleAddition )
 					.unbind( 'relational:remove', this.handleRemoval )
 					.unbind( 'relational:reset', this.handleReset )
+			}
+
+			if ( !collection || !( collection instanceof Backbone.Collection ) ) {
+				collection = new this.collectionType( [], this._getCollectionOptions() );
 			}
 
 			collection.model = this.relatedModel;
@@ -717,7 +769,7 @@
 						console.warn( 'Relation=%o; collectionKey=%s already exists on collection=%o', this, key, this.options.collectionKey );
 					}
 				}
-				else {
+				else if (key) {
 					collection[ key ] = this.instance;
 				}
 			}
@@ -732,27 +784,31 @@
 		
 		findRelated: function( options ) {
 			if ( this.keyContents ) {
-				// Handle cases the an API/user supplies just an Object/id instead of an Array
-				this.keyContents = _.isArray( this.keyContents ) ? this.keyContents : [ this.keyContents ];
-
 				var models = [];
 
-				// Try to find instances of the appropriate 'relatedModel' in the store
-				_.each( this.keyContents, function( item ) {
-					var id = _.isString( item ) || _.isNumber( item ) ? item : item[ this.relatedModel.prototype.idAttribute ];
-					
-					var model = Backbone.Relational.store.find( this.relatedModel, id );
-					if ( model && _.isObject( item ) ) {
-						model.set( item, options );
-					}
-					else if ( !model ) {
-						model = this.createModel( item );
-					}
-					
-					if ( model && !this.related.getByCid( model ) && !this.related.get( model ) ) {
-						models.push( model );
-					}
-				}, this );
+				if ( this.keyContents instanceof Backbone.Collection ) {
+					models = this.keyContents.models;
+				}
+				else {
+					// Handle cases the an API/user supplies just an Object/id instead of an Array
+					this.keyContents = _.isArray( this.keyContents ) ? this.keyContents : [ this.keyContents ];
+
+					// Try to find instances of the appropriate 'relatedModel' in the store
+					_.each( this.keyContents, function( item ) {
+						var model = Backbone.Relational.store.find( this.relatedModel, item );
+
+						if ( model && _.isObject( item ) ) {
+							model.set( item, options );
+						}
+						else if ( !model ) {
+							model = this.createModel( item );
+						}
+
+						if ( model && !this.related.getByCid( model ) && !this.related.get( model ) ) {
+							models.push( model );
+						}
+					}, this );
+				}
 
 				// Add all found 'models' in on go, so 'add' will only be called once (and thus 'sort', etc.)
 				if ( models.length ) {
@@ -776,14 +832,24 @@
 			
 			// Replace 'this.related' by 'attr' if it is a Backbone.Collection
 			if ( attr instanceof Backbone.Collection ) {
-				this.prepareCollection( attr );
+				this._prepareCollection( attr );
 				this.related = attr;
 			}
 			// Otherwise, 'attr' should be an array of related object ids.
-			// Re-use the current 'this.related' if it is a Backbone.Collection.
+			// Re-use the current 'this.related' if it is a Backbone.Collection, and remove any current entries.
+			// Otherwise, create a new collection.
 			else {
-				var coll = this.related instanceof Backbone.Collection ? this.related : new this.collectionType();
-				this.setRelated( this.prepareCollection( coll ) );
+				var coll;
+
+				if ( this.related instanceof Backbone.Collection ) {
+					coll = this.related;
+					coll.reset( [], { silent: true } );
+				}
+				else {
+					coll = this._prepareCollection();
+				}
+
+				this.setRelated( coll );
 				this.findRelated( options );
 			}
 			
@@ -803,7 +869,7 @@
 			if ( !this.related.getByCid( model ) && !this.related.get( model ) ) {
 				// Check if this new model was specified in 'this.keyContents'
 				var item = _.any( this.keyContents, function( item ) {
-					var id = _.isString( item ) || _.isNumber( item ) ? item : item[ this.relatedModel.prototype.idAttribute ];
+					var id = Backbone.Relational.store.resolveIdForItem( this.relatedModel, item );
 					return id && id === model.id;
 				}, this );
 				
@@ -1043,7 +1109,7 @@
 				rel = this.getRelation( key ),
 				keyContents = rel && rel.keyContents,
 				toFetch = keyContents && _.select( _.isArray( keyContents ) ? keyContents : [ keyContents ], function( item ) {
-					var id = _.isString( item ) || _.isNumber( item ) ? item : item[ rel.relatedModel.prototype.idAttribute ];
+					var id = Backbone.Relational.store.resolveIdForItem( rel.relatedModel, item );
 					return id && !Backbone.Relational.store.find( rel.relatedModel, id );
 				}, this );
 			
@@ -1210,21 +1276,21 @@
 				var value = json[ rel.key ];
 
 				if ( rel.options.includeInJSON === true && value && _.isFunction( value.toJSON ) ) {
-					json[ rel.keySource ] = value.toJSON();
+					json[ rel.keyDestination ] = value.toJSON();
 				}
 				else if ( _.isString( rel.options.includeInJSON ) ) {
 					if ( value instanceof Backbone.Collection ) {
-						json[ rel.keySource ] = value.pluck( rel.options.includeInJSON );
+						json[ rel.keyDestination ] = value.pluck( rel.options.includeInJSON );
 					}
 					else if ( value instanceof Backbone.Model ) {
-						json[ rel.keySource ] = value.get( rel.options.includeInJSON );
+						json[ rel.keyDestination ] = value.get( rel.options.includeInJSON );
 					}
 				}
 				else {
 					delete json[ rel.key ];
 				}
 
-				if ( rel.keySource !== rel.key ) {
+				if ( rel.keyDestination !== rel.key ) {
 					delete json[ rel.key ];
 				}
 			}, this );

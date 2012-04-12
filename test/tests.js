@@ -38,19 +38,31 @@ $(document).ready(function() {
 		
 		return url;
 	};
-	
-	
+
+
+	/**
+	 * 'Zoo'
+	 */
+
 	window.Zoo = Backbone.RelationalModel.extend({
-		relations: [{
+		relations: [
+			{
 				type: Backbone.HasMany,
 				key: 'animals',
 				relatedModel: 'Animal',
 				collectionType: 'AnimalCollection',
+				collectionOptions: function( instance ) { return { 'url':  'zoo/' + instance.cid + '/animal/' } },
 				reverseRelation: {
 					key: 'livesIn',
 					includeInJSON: 'id'
 				}
-			}]
+			},
+			{ // A simple HasMany without recursive relation
+				type: Backbone.HasMany,
+				key: 'visitors',
+				relatedModel: 'Visitor'
+			}
+		]
 	});
 
 	window.Animal = Backbone.RelationalModel.extend({
@@ -65,9 +77,20 @@ $(document).ready(function() {
 	});
 
 	window.AnimalCollection = Backbone.Collection.extend({
-		model: Animal
+		model: Animal,
+		
+		initialize: function( models, options ) {
+		    options || (options = {});
+	        this.url = options.url;
+		}
 	});
 
+	window.Visitor = Backbone.RelationalModel.extend();
+
+
+	/**
+	 * House/Person/Job/Company
+	 */
 
 	window.House = Backbone.RelationalModel.extend({
 		relations: [{
@@ -86,7 +109,8 @@ $(document).ready(function() {
 	});
 
 	window.Person = Backbone.RelationalModel.extend({
-		relations: [{
+		relations: [
+			{
 				// Create a cozy, recursive, one-to-one relationship
 				type: Backbone.HasOne,
 				key: 'likesALot',
@@ -149,6 +173,7 @@ $(document).ready(function() {
 			}
 		]
 	});
+
 
 
 	window.Node = Backbone.RelationalModel.extend({
@@ -624,7 +649,7 @@ $(document).ready(function() {
 			ok( person.get( 'user' ).get( 'resource_uri' ) == null );
 		});
 
-		test( "'keySource' loads from & saves to 'key'", function() {
+		test( "'keySource' loads from 'key", function() {
 			var Property = Backbone.RelationalModel.extend({
 				idAttribute: 'property_id'
 			});
@@ -664,12 +689,54 @@ $(document).ready(function() {
 			// The values from view.property_ids should be loaded into view.properties
 			ok( view.get( 'properties' ) && view.get( 'properties' ).length === 2, "'view' has two 'properties'" );
 			ok( typeof view.get( 'property_ids' ) === 'undefined', "'view' does not have 'property_ids'" );
+		});
+
+		test( "'keyDestination' saves to 'key'", function() {
+			var Property = Backbone.RelationalModel.extend({
+				idAttribute: 'property_id'
+			});
+			var View = Backbone.RelationalModel.extend({
+				idAttribute: 'id',
+
+				relations: [{
+					type: Backbone.HasMany,
+					key: 'properties',
+					keyDestination: 'properties_attributes',
+					relatedModel: Property,
+					reverseRelation: {
+						key: 'view',
+						keyDestination: 'view_attributes',
+						includeInJSON: true
+					}
+				}]
+			});
+
+			var property1 = new Property({
+				property_id: 1,
+				key: 'width',
+				value: 500,
+				view: 5
+			});
+
+			var view = new View({
+				id: 5,
+				properties: [ 2 ]
+			});
+
+			var property2 = new Property({
+				property_id: 2,
+				key: 'height',
+				value: 400
+			});
 
 			var viewJSON = view.toJSON();
-			ok( viewJSON.property_ids && viewJSON.property_ids.length === 2, "'viewJSON' has two 'property_ids'" );
+			ok( viewJSON.properties_attributes && viewJSON.properties_attributes.length === 2, "'viewJSON' has two 'properties_attributes'" );
 			ok( typeof viewJSON.properties === 'undefined', "'viewJSON' does not have 'properties'" );
-
-			console.log( view, viewJSON, property1, property2 );
+		});
+		
+		test( "'collectionOptionsCallback' sets the options on the created HasMany Collections", function() {
+		    var zoo = new Zoo();
+		    ok( zoo.get("animals").url === "zoo/" + zoo.cid + "/animal/");
 		});
 		
 		
@@ -945,7 +1012,36 @@ $(document).ready(function() {
 
 			equal( zoo.get( 'animals' ).length, 1, "Still just 1 elephant in the zoo" );
 		});
-	
+
+		test( "collections can also be passed as attributes on creation", function() {
+			var animals = new AnimalCollection([
+				{ id: 1, species: 'Lion' },
+				{ id: 2 ,species: 'Zebra' }
+			]);
+
+			var zoo = new Zoo( { animals: animals } );
+			console.log( zoo.get( 'animals' ), zoo.get( 'animals' ).models );
+
+			equal( zoo.get( 'animals' ), animals, "The 'animals' collection has been set as the zoo's animals" );
+			equal( zoo.get( 'animals' ).length, 2, "Two animals in 'zoo'" );
+
+			zoo.destroy();
+
+			var newZoo = new Zoo( { animals: animals.models } );
+
+			ok( newZoo.get( 'animals' ).length === 2, "Two animals in the 'newZoo'" );
+		});
+
+		test( "models can also be passed as attributes on creation", function() {
+			var artis = new Zoo( { name: 'Artis' } );
+
+			var animal = new Animal( { species: 'Hippo', livesIn: artis });
+
+			equal( artis.get( 'animals' ).at( 0 ), animal, "Artis has a Hippo" );
+			equal( animal.get( 'livesIn' ), artis, "The Hippo is in Artis" );
+		});
+
+
 	module( "Backbone.HasOne", { setup: initObjects } );
 		
 		
@@ -1048,7 +1144,7 @@ $(document).ready(function() {
 		
 		
 	module( "Backbone.HasMany", { setup: initObjects } );
-		
+	
 		
 		test( "Listeners on 'add'/'remove'", function() {
 			expect( 7 );
@@ -1114,7 +1210,7 @@ $(document).ready(function() {
 				});
 			
 			// Add job1 and job2 to the 'Person' side of the relation
-			var jobs = person1.get('jobs');
+			var jobs = person1.get( 'jobs' );
 			
 			jobs.add( job1 );
 			ok( jobs.length === 1, "jobs.length is 1" );
@@ -1169,6 +1265,23 @@ $(document).ready(function() {
 			ok( ourHouse.get( 'occupants' ).id === undefined );
 		});
 
+
+		test( "Setting a new collection or array of ids updates the relation", function() {
+			var zoo = new Zoo();
+
+			var visitors =  [
+				{ name: 'Paul' }
+			];
+
+			zoo.set( 'visitors', visitors );
+
+			equal( zoo.get( 'visitors' ).length, 1 );
+
+			zoo.set( 'visitors', [] );
+
+			equal( zoo.get( 'visitors' ).length, 0 );
+		});
+
 		test( "Setting a custom collection in 'collectionType' uses that collection for instantiation", function() {
 			var zoo = new Zoo();
 			
@@ -1188,7 +1301,7 @@ $(document).ready(function() {
 			ok( zoo.get( 'animals' ) instanceof AnimalCollection );
 		});
 
-		test( "Settings a new collection maintains that collection's current 'models'", function() {
+		test( "Setting a new collection maintains that collection's current 'models'", function() {
 			var zoo = new Zoo();
 
 			var animals = new AnimalCollection([
@@ -1211,7 +1324,7 @@ $(document).ready(function() {
 			equal( zoo.get( 'animals' ).length, 3 );
 		});
 
-		test( "Models found in 'findRelated' are all added in one go (and 'sort' will only be called once)", function() {
+		test( "Models found in 'findRelated' are all added in one go (so 'sort' will only be called once)", function() {
 			var count = 0,
 				sort = Backbone.Collection.prototype.sort;
 
