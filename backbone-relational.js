@@ -212,7 +212,34 @@
 		
 		find: function( type, id ) {
 			var coll = this.getCollection( type );
-			return coll && coll.get( id );
+            var model=false;
+
+            if (coll){
+                model=coll.get(id);
+                if (model){
+                    return model;
+                }
+            }
+
+            if (!coll || !model){
+                _.find(
+                    this._collections,
+                    function(collection){
+                        model=collection.get(id);
+                        if (model){
+                            return true;
+                        }else{
+                            return false;
+                        }
+                    }
+                );
+                if (model){
+                    return model;
+                }
+            }
+            return false;
+
+//			return coll && coll.get( id );
 		},
 		
 		/**
