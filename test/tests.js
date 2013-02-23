@@ -46,6 +46,8 @@ $(document).ready(function() {
 	 */
 
 	window.Zoo = Backbone.RelationalModel.extend({
+		urlRoot: '/zoo/',
+
 		relations: [
 			{
 				type: Backbone.HasMany,
@@ -178,7 +180,11 @@ $(document).ready(function() {
 				type: Backbone.HasOne,
 				key: 'password'
 			}
-		}]
+		}],
+
+		toString: function() {
+			return 'Password (' + this.id + ')';
+		}
 	});
 	
 	// A link table between 'Person' and 'Company', to achieve many-to-many relations
@@ -289,6 +295,8 @@ $(document).ready(function() {
 	});
 
 	window.Agent = Backbone.RelationalModel.extend({
+		urlRoot: '/agent/',
+
 		relations: [
 			{
 				type: Backbone.HasMany,
@@ -316,10 +324,7 @@ $(document).ready(function() {
 		// Reset last ajax requests
 		window.requests = [];
 
-		// save _reverseRelations, otherwise we'll get a lot of warnings about existing relations
-		var oldReverseRelations = Backbone.Relational.store._reverseRelations;
-		Backbone.Relational.store = new Backbone.Store();
-		Backbone.Relational.store._reverseRelations = oldReverseRelations;
+		Backbone.Relational.store.reset();
 		Backbone.Relational.eventQueue = new Backbone.BlockingQueue();
 	}
 
@@ -380,14 +385,58 @@ $(document).ready(function() {
 			resource_uri: 'house-2'
 		});
 	}
-	
-	
+
+	module ( "General / Backbone", { setup: reset } );
+
+		test( "Prototypes, constructors and inheritance", function() {
+			// This stuff makes my brain hurt a bit. So, for reference:
+			var Model = Backbone.Model.extend(),
+				i = new Backbone.Model(),
+				iModel = new Model();
+
+			var RelModel= Backbone.RelationalModel.extend(),
+				iRel = new Backbone.RelationalModel(),
+				iRelModel = new RelModel();
+
+			// Both are functions, so their `constructor` is `Function`
+			ok( Backbone.Model.constructor == Backbone.RelationalModel.constructor );
+
+			ok( Backbone.Model != Backbone.RelationalModel );
+			ok( Backbone.Model == Backbone.Model.prototype.constructor );
+			ok( Backbone.RelationalModel == Backbone.RelationalModel.prototype.constructor );
+			ok( Backbone.Model.prototype.constructor != Backbone.RelationalModel.prototype.constructor );
+
+			ok( Model.prototype instanceof Backbone.Model );
+			ok( !( Model.prototype instanceof Backbone.RelationalModel ) );
+			ok( RelModel.prototype instanceof Backbone.Model );
+			ok( Backbone.RelationalModel.prototype instanceof Backbone.Model );
+			ok( RelModel.prototype instanceof Backbone.RelationalModel );
+
+			ok( i instanceof Backbone.Model );
+			ok( !( i instanceof Backbone.RelationalModel ) );
+			ok( iRel instanceof Backbone.Model );
+			ok( iRel instanceof Backbone.RelationalModel );
+
+			ok( iModel instanceof Backbone.Model );
+			ok( !( iModel instanceof Backbone.RelationalModel ) );
+			ok( iRelModel instanceof Backbone.Model );
+			ok( iRelModel instanceof Backbone.RelationalModel );
+		});
+
+		test('update', 1, function() {
+			var a = new Backbone.Model({id: 3, label: 'a'} ),
+				b = new Backbone.Model({id: 2, label: 'b'} ),
+				col = new Backbone.Collection([a]);
+
+			col.update([a,b], {add: true, merge: false, remove: true});
+			ok( col.length == 2 );
+		});
+
+
 	module( "Backbone.Semaphore", { setup: reset } );
+
 	
-	
-		test( "Unbounded", function() {
-			expect( 10 );
-			
+		test( "Unbounded", 10, function() {
 			var semaphore = _.extend( {}, Backbone.Semaphore );
 			ok( !semaphore.isLocked(), 'Semaphore is not locked initially' );
 			semaphore.acquire();
@@ -465,14 +514,14 @@ $(document).ready(function() {
 	
 	
 		test( "Initialized", function() {
-			// `initObjects` instantiates models of the following types: `Person`, `Job`, `Company`, `User`, `House` and `Password`
+			// `initObjects` instantiates models of the following types: `Person`, `Job`, `Company`, `User`, `House` and `Password`.
 			equal( Backbone.Relational.store._collections.length, 6, "Store contains 6 collections" );
 		});
 		
 		test( "getObjectByName", function() {
 			equal( Backbone.Relational.store.getObjectByName( 'Backbone.RelationalModel' ), Backbone.RelationalModel );
 		});
-		
+
 		test( "Add and remove from store", function() {
 			var coll = Backbone.Relational.store.getCollection( person1 );
 			var length = coll.length;
@@ -675,7 +724,7 @@ $(document).ready(function() {
 			delete window.Carnivore;
 		});
 		
-	
+
 	module( "Backbone.RelationalModel", { setup: initObjects } );
 		
 		
@@ -849,7 +898,7 @@ $(document).ready(function() {
 
 			equal( requests.length, 0, "No requests to fetch the customers has been made as autoFetch was not defined" );
 
-			var agentOne = new Agent({
+			agentOne = new Agent({
 				id: 'agent-2',
 				address: 'address-5'
 			});
@@ -875,7 +924,31 @@ $(document).ready(function() {
 			var json = node.toJSON();
 
 			ok( json.children.length === 1 );
+		});
 
+		test( "`parse` gets called through `findOrCreate`", function() {
+			var parseCalled = 0;
+			Zoo.prototype.parse = function( resp, options ) {
+				parseCalled++;
+				return resp;
+			};
+
+			var animal = new Animal({ id: '123' });
+			animal.set({
+				id: '123',
+				livesIn: {
+					id: '456',
+					name: 'San Diego Zoo',
+					animals: [ '123' ]
+				}
+			}, { parse: true });
+
+			ok( animal.get( 'livesIn' ) instanceof Zoo );
+			ok( animal.get( 'livesIn' ).get( 'animals' ).get( animal ) === animal );
+
+			// `parse` should get called once by `findOrCreate` directly when trying to lookup `456`,
+			// and once when it `build` (called from `findOrCreate`) calls the Zoo constructor with `{ parse: true}`.
+			ok( parseCalled === 2 );
 		});
 
 		test( "constructor.findOrCreate", function() {
@@ -908,8 +981,8 @@ $(document).ready(function() {
 			ok( person instanceof Person );
 			ok( origPersonCollSize + 1 === personColl.length, "No person was found (1 created)" );
 
-			// Find when options.update is false
-			person = Person.findOrCreate( { id: person1.id, name: 'phil' }, { update: false } );
+			// Find when options.merge is false
+			person = Person.findOrCreate( { id: person1.id, name: 'phil' }, { merge: false } );
 
 			equal( person.get( 'name' ), 'dude' );
 			equal( person1.get( 'name' ), 'dude' );
@@ -1083,13 +1156,13 @@ $(document).ready(function() {
 				pets: [ dog ]
 			});
 
-			equal( dog.get( 'owner' ), person, "Dog has a working owner relation." );
+			ok( dog.get( 'owner' ) === person, "Dog has a working owner relation." );
 
 			var flea = new scope.Flea({
 				host: dog
 			});
 			
-			equal( dog.get( 'fleas' ).at( 0 ), flea, "Dog has a working fleas relation." );
+			ok( dog.get( 'fleas' ).at( 0 ) === flea, "Dog has a working fleas relation." );
 		});
 	
 		test( "toJSON includes the type", function() {
@@ -1178,6 +1251,31 @@ $(document).ready(function() {
 			ok( person.get( 'user' ) === user );
 			// Old data gets overwritten by the explicitly created user, since a model was never created from the old data
 			ok( person.get( 'user' ).get( 'resource_uri' ) == null );
+		});
+
+		test("'dotNotation' is true", function(){
+			var NewUser = Backbone.RelationalModel.extend({});
+			var NewPerson = Backbone.RelationalModel.extend({
+				dotNotation: true,
+				relations: [{
+					type: Backbone.HasOne,
+					key: 'user',
+					relatedModel: NewUser
+				}]
+			});
+			
+			var person = new NewPerson({
+				"normal": true,
+				"user.over": 2,
+				user: {name: "John", "over" : 1}
+			});
+			
+			ok( person.get( 'normal' ) === true, "getting normal attributes works as usual" );
+			ok( person.get( 'user.name' ) === "John", "attributes of nested models can be get via dot notation: nested.attribute");
+			ok(oldCompany.get( 'ceo.name' ) === undefined, "no dotNotation when not enabled");
+			raises( function() {
+				person.get( 'user.over' );
+			}, "getting ambiguous nested attributes raises an exception");
 		});
 
 		test( "Relations load from both `keySource` and `key`", function() {
@@ -1535,8 +1633,8 @@ $(document).ready(function() {
 			var zoo = new Zoo();
 			
 			zoo.bind( 'add:animals', function( animal ) {
-					ok( animal instanceof Animal );
-				});
+				ok( animal instanceof Animal );
+			});
 			
 			var smallElephant = new Animal( { name: 'Jumbo', species: 'elephant', weight: 2000, livesIn: zoo } );
 			equal( zoo.get( 'animals' ).length, 1, "Just 1 elephant in the zoo" );
@@ -1547,7 +1645,91 @@ $(document).ready(function() {
 			equal( zoo.get( 'animals' ).length, 1, "Still just 1 elephant in the zoo" );
 		});
 
-		test( "collections can also be passed as attributes on creation", function() {
+		test( "Updating (retrieving) a model keeps relation consistency intact", function() {
+			var zoo = new Zoo();
+
+			var lion = new Animal({
+				species: 'Lion',
+				livesIn: zoo
+			});
+
+			equal( zoo.get( 'animals' ).length, 1 );
+
+			lion.set({
+				id: 5,
+				species: 'Lion',
+				livesIn: zoo
+			});
+
+			equal( zoo.get( 'animals' ).length, 1 );
+
+			zoo.set({
+				name: 'Dierenpark Amersfoort',
+				animals: [ 5 ]
+			});
+
+			equal( zoo.get( 'animals' ).length, 1 );
+			ok( zoo.get( 'animals' ).at( 0 ) === lion, "lion is in zoo" );
+			ok( lion.get( 'livesIn' ) === zoo );
+
+			var elephant = new Animal({
+				species: 'Elephant',
+				livesIn: zoo
+			});
+
+			equal( zoo.get( 'animals' ).length, 2 );
+			ok( elephant.get( 'livesIn' ) === zoo );
+
+			zoo.set({
+				id: 2
+			});
+
+			equal( zoo.get( 'animals' ).length, 2 );
+			ok( lion.get( 'livesIn' ) === zoo );
+			ok( elephant.get( 'livesIn' ) === zoo );
+		});
+
+		test( "Setting id on objects with reverse relations updates related collection correctly", function() {
+			var zoo1 = new Zoo({ id: 2 });
+
+			ok( zoo1.get( 'animals' ).size() === 0, "zoo has no animals" );
+
+			var lion = new Animal({ livesIn: 2 });
+
+			ok( lion.get( 'livesIn' ) === zoo1, "zoo1 connected to lion" );
+			ok( zoo1.get( 'animals' ).size() === 1, "zoo1 has one Animal" );
+			ok( zoo1.get( 'animals' ).at( 0 ) === lion, "lion added to zoo1" );
+			ok( zoo1.get( 'animals' ).get( lion ) === lion, "lion can be retrieved from zoo1" );
+
+			lion.set( { id: 5, livesIn: 2 } );
+
+			ok( lion.get( 'livesIn' ) === zoo1, "zoo1 connected to lion" );
+			ok( zoo1.get( 'animals' ).size() === 1, "zoo1 has one Animal" );
+			ok( zoo1.get( 'animals' ).at( 0 ) === lion, "lion added to zoo1" );
+			ok( zoo1.get( 'animals' ).get( lion ) === lion, "lion can be retrieved from zoo1" );
+
+			// Other way around
+			var elephant = new Animal( { id: 6 } ),
+				tiger = new Animal( { id: 7 } ),
+				zoo2 = new Zoo( { animals: [ 6 ] } );
+
+			ok( elephant.get( 'livesIn' ) === zoo2, "zoo2 connected to elephant" );
+			ok( zoo2.get( 'animals' ).size() === 1, "zoo2 has one Animal" );
+			ok( zoo2.get( 'animals' ).at( 0 ) === elephant, "elephant added to zoo2" );
+			ok( zoo2.get( 'animals' ).get( elephant ) === elephant, "elephant can be retrieved from zoo2" );
+
+			zoo2.set( { id: 5, animals: [ 6, 7 ] } );
+
+			ok( elephant.get( 'livesIn' ) === zoo2, "zoo2 connected to elephant" );
+			ok( tiger.get( 'livesIn' ) === zoo2, "zoo2 connected to tiger" );
+			ok( zoo2.get( 'animals' ).size() === 2, "zoo2 has one Animal" );
+			ok( zoo2.get( 'animals' ).at( 0 ) === elephant, "elephant added to zoo2" );
+			ok( zoo2.get( 'animals' ).at( 1 ) === tiger, "tiger added to zoo2" );
+			ok( zoo2.get( 'animals' ).get( elephant ) === elephant, "elephant can be retrieved from zoo2" );
+			ok( zoo2.get( 'animals' ).get( tiger ) === tiger, "tiger can be retrieved from zoo2" );
+		});
+
+		test( "Collections can be passed as attributes on creation", function() {
 			var animals = new AnimalCollection([
 				{ id: 1, species: 'Lion' },
 				{ id: 2 ,species: 'Zebra' }
@@ -1565,7 +1747,7 @@ $(document).ready(function() {
 			ok( newZoo.get( 'animals' ).length === 2, "Two animals in the 'newZoo'" );
 		});
 
-		test( "models can also be passed as attributes on creation", function() {
+		test( "Models can be passed as attributes on creation", function() {
 			var artis = new Zoo( { name: 'Artis' } );
 
 			var animal = new Animal( { species: 'Hippo', livesIn: artis });
@@ -1574,24 +1756,25 @@ $(document).ready(function() {
 			equal( animal.get( 'livesIn' ), artis, "The Hippo is in Artis" );
 		});
 
-		test( "id checking handles for `undefined`, `null`, `0` ids properly", function() {
+		test( "id checking handles `undefined`, `null`, `0` ids properly", function() {
 			var parent = new Node();
 			var child = new Node( { parent: parent } );
 
-			equal( child.get( 'parent' ), parent );
+			ok( child.get( 'parent' ) === parent );
 			parent.destroy();
-			equal( child.get( 'parent' ), null );
+			ok( child.get( 'parent' ) === null, child.get( 'parent' ) + ' === null' );
 
 			// It used to be the case that `randomOtherNode` became `child`s parent here, since both the `parent.id`
 			// (which is stored as the relation's `keyContents`) and `randomOtherNode.id` were undefined.
 			var randomOtherNode = new Node();
-			equal( child.get( 'parent' ), null );
+			ok( child.get( 'parent' ) === null, child.get( 'parent' ) + ' === null' );
 
 			// Create a child with parent id=0, then create the parent
 			child = new Node( { parent: 0 } );
-			equal( child.get( 'parent' ), null );
+			ok( child.get( 'parent' ) === null, child.get( 'parent' ) + ' === null' );
+
 			parent = new Node( { id: 0 } );
-			equal( child.get( 'parent' ), parent );
+			ok( child.get( 'parent' ) === parent );
 
 			child.destroy();
 			parent.destroy();
@@ -1599,11 +1782,12 @@ $(document).ready(function() {
 			// The other way around; create the parent with id=0, then the child
 			parent = new Node( { id: 0 } );
 			equal( parent.get( 'children' ).length, 0 );
+
 			child = new Node( { parent: 0 } );
-			equal( child.get( 'parent' ), parent );
+			ok( child.get( 'parent' ) === parent );
 		});
 
-		test("Repeated model initialization and a collection should not break existing models", function () {
+		test( "Repeated model initialization and a collection should not break existing models", function () {
 			var dataCompanyA = {
 				id: 'company-a',
 				name: 'Big Corp.',
@@ -1633,7 +1817,37 @@ $(document).ready(function() {
 			equal( companyA.get('employees').length, 2, 'with elements' );
 		});
 
-		test("If keySource is used don't remove a model that is present in the key attribute", function() {
+		test( "Destroy removes models from (non-reverse) relations", function() {
+			var agent = new Agent( { id: 1, customers: [ 2, 3, 4 ], address: { city: 'Utrecht' } } );
+
+			var c2 = new Customer( { id: 2 } );
+			var c3 = new Customer( { id: 3 } );
+			var c4 = new Customer( { id: 4 } );
+
+			ok( agent.get( 'customers' ).length === 3 );
+
+			c2.destroy();
+
+			ok( agent.get( 'customers' ).length === 2 );
+			ok( agent.get( 'customers' ).get( c3 ) === c3 );
+			ok( agent.get( 'customers' ).get( c4 ) === c4 );
+
+			agent.get( 'customers' ).remove( c3 );
+
+			ok( agent.get( 'customers' ).length === 1 );
+
+			ok( agent.get( 'address' ) instanceof Address );
+
+			agent.get( 'address' ).destroy();
+
+			ok( !agent.get( 'address' ) );
+
+			agent.destroy();
+
+			equal( agent.get( 'customers' ).length, 0 );
+		});
+
+		test( "If keySource is used don't remove a model that is present in the key attribute", function() {
 			var ForumPost = Backbone.RelationalModel.extend({
 				// Normally would set something here, not needed for test
 			});
@@ -1691,23 +1905,21 @@ $(document).ready(function() {
 
 
 	module( "Backbone.HasOne", { setup: initObjects } );
-		
-		
+
+
 		test( "HasOne relations on Person are set up properly", function() {
 			ok( person1.get('likesALot') === person2 );
 			equal( person1.get('user').id, 'user-1', "The id of 'person1's user is 'user-1'" );
 			ok( person2.get('likesALot') === person1 );
 		});
-		
+
 		test( "Reverse HasOne relations on Person are set up properly", function() {
 			ok( person1.get( 'likedALotBy' ) === person2 );
 			ok( person1.get( 'user' ).get( 'person' ) === person1, "The person belonging to 'person1's user is 'person1'" );
 			ok( person2.get( 'likedALotBy' ) === person1 );
 		});
-		
-		test( "'set' triggers 'change' and 'update', on a HasOne relation, for a Model with multiple relations", function() {
-			expect( 9 );
 
+		test( "'set' triggers 'change' and 'update', on a HasOne relation, for a Model with multiple relations", 9, function() {
 			// triggers initialization of the reverse relation from User to Password
 			var password = new Password( { plaintext: 'asdf' } );
 			
@@ -1742,9 +1954,7 @@ $(document).ready(function() {
 			user.set( { password: password } );
 		});
 
-		test( "'set' doesn't triggers 'change' and 'update:' when passed `silent: true`", function() {
-			expect( 2 );
-
+		test( "'set' doesn't triggers 'change' and 'update:' when passed `silent: true`", 2, function() {
 			person1.bind( 'change', function( model, options ) {
 				ok( false, "'change' should not get triggered" );
 			});
@@ -1765,9 +1975,7 @@ $(document).ready(function() {
 			equal( person1.get( 'user' ), user );
 		});
 		
-		test( "'unset' triggers 'change' and 'update:'", function() {
-			expect( 4 );
-			
+		test( "'unset' triggers 'change' and 'update:'", 4, function() {
 			person1.bind( 'change', function( model, options ) {
 					equal( model.get('user'), null, "model.user is unset" );
 				});
@@ -1784,9 +1992,7 @@ $(document).ready(function() {
 			equal( user.get( 'person' ), null, "person1 is not set on 'user' anymore" );
 		});
 		
-		test( "'clear' triggers 'change' and 'update:'", function() {
-			expect( 4 );
-			
+		test( "'clear' triggers 'change' and 'update:'", 4, function() {
 			person1.bind( 'change', function( model, options ) {
 					equal( model.get('user'), null, "model.user is unset" );
 				});
@@ -1802,14 +2008,12 @@ $(document).ready(function() {
 			
 			equal( user.get( 'person' ), null, "person1 is not set on 'user' anymore" );
 		});
-		
-		
+
+
 	module( "Backbone.HasMany", { setup: initObjects } );
 	
-		
-		test( "Listeners on 'add'/'remove'", function() {
-			expect( 7 );
-			
+
+		test( "Listeners on 'add'/'remove'", 7, function() {
 			ourHouse
 				.bind( 'add:occupants', function( model, coll ) {
 						ok( model === person1, "model === person1" );
@@ -2026,7 +2230,7 @@ $(document).ready(function() {
 			equal( indexes[0], 0, "First item has index 0" );
 			equal( indexes[1], 1, "Second item has index 1" );
 		});
-		
+
 		test( "Models set to a hasMany relation do trigger an add event in the underlying Collection with a correct index", function() {
 			var zoo = new Zoo();
 
@@ -2054,12 +2258,13 @@ $(document).ready(function() {
 			equal( zoo.get( 'animals' ).livesIn, zoo );
 			equal( zoo.get( 'animals' ).zoo, undefined );
 
+
+			var FarmAnimal = Backbone.RelationalModel.extend();
 			var Barn = Backbone.RelationalModel.extend({
 				relations: [{
 						type: Backbone.HasMany,
 						key: 'animals',
-						relatedModel: 'Animal',
-						collectionType: 'AnimalCollection',
+						relatedModel: FarmAnimal,
 						collectionKey: 'barn',
 						reverseRelation: {
 							key: 'livesIn',
@@ -2074,12 +2279,12 @@ $(document).ready(function() {
 			equal( barn.get( 'animals' ).livesIn, undefined );
 			equal( barn.get( 'animals' ).barn, barn );
 
+			FarmAnimal = Backbone.RelationalModel.extend();
 			var BarnNoKey = Backbone.RelationalModel.extend({
 				relations: [{
 						type: Backbone.HasMany,
 						key: 'animals',
-						relatedModel: 'Animal',
-						collectionType: 'AnimalCollection',
+						relatedModel: FarmAnimal,
 						collectionKey: false,
 						reverseRelation: {
 							key: 'livesIn',
@@ -2140,7 +2345,7 @@ $(document).ready(function() {
 		});
 		
 		
-	module( "Reverse relationships", { setup: initObjects } );
+	module( "Reverse relations", { setup: initObjects } );
 	
 	
 		test( "Add and remove", function() {
@@ -2157,6 +2362,32 @@ $(document).ready(function() {
 			equal( theirHouse.get( 'occupants' ).length, 1, "theirHouse has 1 occupant" );
 			equal( ourHouse.get( 'occupants' ).length, 1, "ourHouse has 1 occupant" );
 			equal( person1.get( 'livesIn' ) && person1.get('livesIn').id, theirHouse.id, "Person 1 lives in theirHouse" );
+		});
+
+		test( "Destroy removes models from reverse relations", function() {
+			var zoo = new Zoo( { id:1, animals: [ 2, 3, 4 ] } );
+
+			var rhino = new Animal( { id: 2, species: 'rhino' } );
+			var baboon = new Animal( { id: 3, species: 'baboon' } );
+			var hippo = new Animal( { id: 4, species: 'hippo' } );
+
+			ok( zoo.get( 'animals' ).length === 3 );
+
+			rhino.destroy();
+
+			ok( zoo.get( 'animals' ).length === 2 );
+			ok( zoo.get( 'animals' ).get( baboon ) === baboon );
+			ok( !rhino.get( 'zoo' ) );
+
+			zoo.get( 'animals' ).remove( hippo );
+
+			ok( zoo.get( 'animals' ).length === 1 );
+			ok( !hippo.get( 'zoo' ) );
+
+			zoo.destroy();
+
+			ok( zoo.get( 'animals' ).length === 0 );
+			ok( !baboon.get( 'zoo' ) );
 		});
 		
 		test( "HasOne relations to self (tree stucture)", function() {
@@ -2182,7 +2413,8 @@ $(document).ready(function() {
 			child.set( 'parent', parent );
 			parent.save( { 'parent': child } );
 
-			//console.log( parent, child );
+			ok( parent.get( 'parent' ) === child );
+			ok( child.get( 'parent' ) === parent );
 		});
 		
 		test( "HasMany relations to self (tree structure)", function() {
@@ -2250,20 +2482,18 @@ $(document).ready(function() {
 			ok( user2.get( 'person' ) === person2 );
 		});
 		
-		test( "'Save' objects (performing 'set' multiple times without and with id)", function() {
-			expect( 2 );
-			
+		test( "'Save' objects (performing 'set' multiple times without and with id)", 4, function() {
 			person3
 				.bind( 'add:jobs', function( model, coll ) {
-						var company = model.get('company');
-						ok( company instanceof Company && company.get('ceo').get('name') === 'Lunar boy' && model.get('person') === person3,
-							"Both Person and Company are set on the Job instance" );
-					})
+					var company = model.get('company');
+					ok( company instanceof Company && company.get('ceo').get('name') === 'Lunar boy' && model.get('person') === person3,
+						"add:jobs: Both Person and Company are set on the Job instance once the event gets fired" );
+				})
 				.bind( 'remove:jobs', function( model, coll ) {
-						ok( false, "'person3' should not lose his job" );
-					});
+					ok( false, "remove:jobs: 'person3' should not lose his job" );
+				});
 			
-			// Create Models from an object
+			// Create Models from an object. Should trigger `add:jobs`
 			var company = new Company({
 				name: 'Luna Corp.',
 				ceo: {
@@ -2271,8 +2501,19 @@ $(document).ready(function() {
 				},
 				employees: [ { person: 'person-3' } ]
 			});
+
+			company
+				.bind( 'add:employees', function( model, coll ) {
+					var company = model.get('company');
+					ok( company instanceof Company && company.get('ceo').get('name') === 'Lunar boy' && model.get('person') === person3,
+						"add:employees: Both Person and Company are set on the Company instance once the event gets fired" );
+				})
+				.bind( 'remove:employees', function( model, coll ) {
+					ok( true, "'remove:employees: person3' should lose a job once" );
+				});
 			
 			// Backbone.save executes "model.set(model.parse(resp), options)". Set a full map over object, but now with ids.
+			// Should trigger `remove:employees`, `add:employees`, and `add:jobs`
 			company.set({
 				id: 'company-3',
 				name: 'Big Corp.',
@@ -2283,6 +2524,11 @@ $(document).ready(function() {
 				},
 				employees: [ { id: 'job-1', person: 'person-3', resource_uri: 'job-1' } ],
 				resource_uri: 'company-3'
+			});
+
+			// This should not trigger additional `add`/`remove` events
+			company.set({
+				employees: [ 'job-1' ]
 			});
 		});
 		
@@ -2386,7 +2632,7 @@ $(document).ready(function() {
 
 			ok( view.get( 'properties' ) instanceof Backbone.Collection );
 		});
-		
+
 		test( "Reverse relations found for models that have not been instantiated and run .setup() manually", function() {
 			// Generated from CoffeeScript code:
 			// 	 class View extends Backbone.RelationalModel
@@ -2479,9 +2725,33 @@ $(document).ready(function() {
 			ok( user.get('person') === person );
 			//console.debug( person, user );
 		});
-	
-	
-	module( "Model loading", { setup: initObjects } );
+
+	test( "ReverseRelations are applied retroactively (2)", function() {
+		var models = {};
+		Backbone.Relational.store.addModelScope( models );
+
+		// Use brand new Model types, so we can be sure we don't have any reverse relations cached from previous tests
+		models.NewPerson = Backbone.RelationalModel.extend({
+			relations: [{
+				type: Backbone.HasOne,
+				key: 'user',
+				relatedModel: 'NewUser',
+				reverseRelation: {
+					type: Backbone.HasOne,
+					key: 'person'
+				}
+			}]
+		});
+		models.NewUser = Backbone.RelationalModel.extend({});
+
+		var user = new models.NewUser( { id: 'newuser-1', person: { id: 'newperson-1' } } );
+
+		equal( user.getRelations().length, 1 );
+		ok( user.get( 'person' ) instanceof models.NewPerson );
+	});
+
+
+	module( "Backbone.Collection", { setup: reset } );
 	
 	
 		test( "Loading (fetching) multiple times updates the model, and relations's `keyContents`", function() {
@@ -2498,14 +2768,14 @@ $(document).ready(function() {
 			
 			// The 'name' of 'user' is updated when adding a new hash to the collection
 			name = 'New name';
-			collA.add( { id: '/user/1/', name: name } );
+			collA.add( { id: '/user/1/', name: name }, { merge: true } );
 			var updatedUser = collA.at( 0 );
 			equal( user.get( 'name' ), name );
 			equal( updatedUser.get( 'name' ), name );
 			
 			// The 'name' of 'user' is also updated when adding a new hash to another collection
 			name = 'Another new name';
-			collB.add( { id: '/user/1/', name: name, title: 'Superuser' } );
+			collB.add( { id: '/user/1/', name: name, title: 'Superuser' }, { merge: true } );
 			var updatedUser2 = collA.at( 0 );
 			equal( user.get( 'name' ), name );
 			equal( updatedUser2.get('name'), name );
@@ -2525,7 +2795,7 @@ $(document).ready(function() {
 
 			equal( user.get( 'login' ), 'User' );
 
-			coll.add( { id: 'person-10', name: 'New person', user: { id: 'user-10', login: 'New user' } } );
+			coll.add( { id: 'person-10', name: 'New person', user: { id: 'user-10', login: 'New user' } }, { merge: true } );
 
 			equal( person.get( 'name' ), 'New person' );
 			equal( user.get( 'login' ), 'New user' );
@@ -2543,32 +2813,228 @@ $(document).ready(function() {
 			equal( lion.get( 'name' ), 'Mufasa' );
 
 			// Update the name of 'zoo' and 'lion'
-			coll.add( { id: 'zoo-1', name: 'Zoo Station', animals: [ { id: 'lion-1', name: 'Simba' } ] } );
+			coll.add( { id: 'zoo-1', name: 'Zoo Station', animals: [ { id: 'lion-1', name: 'Simba' } ] }, { merge: true } );
 
 			equal( zoo.get( 'name' ), 'Zoo Station' );
 			equal( lion.get( 'name' ), 'Simba' );
 		});
 
+		test( "add/remove/update (with `add`, `remove` and `merge` options)", function() {
+			var coll = new AnimalCollection();
+
+			/**
+			 * Add
+			 */
+			coll.add( { id: 1, species: 'giraffe' } );
+
+			ok( coll.length === 1 );
+
+			coll.add( {	id: 1, species: 'giraffe' } );
+
+			ok( coll.length === 1 );
+
+			coll.add([
+				{
+					id: 1, species: 'giraffe'
+				},
+				{
+					id: 2, species: 'gorilla'
+				}
+			]);
+
+			var giraffe = coll.get( 1 ),
+				gorilla = coll.get( 2 ),
+				dolphin = new Animal( { species: 'dolphin' } ),
+				hippo = new Animal( { id: 4, species: 'hippo' } );
+
+			ok( coll.length === 2 );
+
+			coll.add( dolphin );
+
+			ok( coll.length === 3 );
+
+			// Update won't do anything
+			coll.add( {	id: 1, species: 'giraffe', name: 'Long John' } );
+
+			ok( !coll.get( 1 ).get( 'name' ) );
+
+			// Update with `merge: true` will update the animal
+			coll.add( { id: 1, species: 'giraffe', name: 'Long John' }, { merge: true } );
+
+			ok( coll.get( 1 ).get( 'name' ) === 'Long John' );
+
+			/**
+			 * Remove
+			 */
+			coll.remove( 1 );
+
+			ok( coll.length === 2 );
+			ok( !coll.get( 1 ), "`giraffe` removed from coll" );
+
+			coll.remove( dolphin );
+
+			ok( coll.length === 1 );
+			ok( coll.get( 2 ) === gorilla, "Only `gorilla` is left in coll" );
+
+			/**
+			 * Update
+			 */
+			coll.add( giraffe );
+
+			// This shouldn't do much at all
+			var options = { add: false, merge: false, remove: false };
+			coll.update( [ dolphin, { id: 2, name: 'Silverback' } ], options );
+
+			ok( coll.length === 2 );
+			ok( coll.get( 2 ) === gorilla, "`gorilla` is left in coll" );
+			ok( !coll.get( 2 ).get( 'name' ), "`gorilla` name not updated" );
+
+			// This should remove `giraffe`, add `hippo`, leave `dolphin`, and update `gorilla`.
+			options = { add: true, merge: true, remove: true };
+			coll.update( [ 4, dolphin, { id: 2, name: 'Silverback' } ], options );
+
+			ok( coll.length === 3 );
+			ok( !coll.get( 1 ), "`giraffe` removed from coll" );
+			equal( coll.get( 2 ), gorilla );
+			ok( !coll.get( 3 ) );
+			equal( coll.get( 4 ), hippo );
+			equal( coll.get( dolphin ), dolphin );
+			equal( gorilla.get( 'name' ), 'Silverback' );
+		});
+
+
+	module( "Events", { setup: reset } );
+
+		test( "`add:`, `remove:` and `update:` events", function() {
+			var zoo = new Zoo(),
+				animal = new Animal();
+
+			var addEventsTriggered = 0;
+			var removeEventsTriggered = 0;
+			var updateEventsTriggered = 0;
+
+			zoo
+//				.on( 'change:animals', function( model, coll ) {
+//					console.log( 'change:animals; args=%o', arguments );
+//				})
+//				.on( 'update:animals', function( model, coll ) {
+//					console.log( 'update:animals; args=%o', arguments );
+//				})
+				.bind( 'add:animals', function( model, coll ) {
+					//console.log( 'add:animals; args=%o', arguments );
+					addEventsTriggered++;
+				})
+				.bind( 'remove:animals', function( model, coll ) {
+					//console.log( 'remove:animals; args=%o', arguments );
+					removeEventsTriggered++;
+				});
+
+			animal
+//				.on( 'change:livesIn', function( model, coll ) {
+//					console.log( 'change:livesIn; args=%o', arguments );
+//				})
+				.bind( 'update:livesIn', function( model, coll ) {
+					//console.log( 'update:livesIn; args=%o', arguments );
+					updateEventsTriggered++;
+				});
+
+			// Should trigger `change:livesIn` and `add:animals`
+			animal.set( 'livesIn', zoo );
+
+			zoo.set( 'id', 'z1' );
+			animal.set( 'id', 'a1' );
+
+			ok( addEventsTriggered === 1 );
+			ok( removeEventsTriggered === 0 );
+			ok( updateEventsTriggered === 1 );
+
+			// Doing this shouldn't trigger any `add`/`remove`/`update` events
+			zoo.set( 'animals', [ 'a1' ] );
+
+			ok( addEventsTriggered === 1 );
+			ok( removeEventsTriggered === 0 );
+			ok( updateEventsTriggered === 1 );
+
+			// Doesn't cause an actual state change
+			animal.set( 'livesIn', 'z1' );
+
+			ok( addEventsTriggered === 1 );
+			ok( removeEventsTriggered === 0 );
+			ok( updateEventsTriggered === 1 );
+
+			// Should trigger a `remove` on zoo and an `update` on animal
+			animal.set( 'livesIn', { id: 'z2' } );
+
+			ok( addEventsTriggered === 1 );
+			ok( removeEventsTriggered === 1 );
+			ok( updateEventsTriggered === 2 );
+		});
+
+		test( "No (`reset`) events when initializing a HasMany", function() {
+			var eventsTriggered = 0;
+
+			var PropertiesCollection = Backbone.Collection.extend({
+				initialize: function() {
+					this
+						.on( 'add', function() {
+							eventsTriggered++;
+						})
+						.on( 'reset', function() {
+							eventsTriggered++;
+						})
+						.on( 'remove', function() {
+							eventsTriggered++;
+						});
+				}
+			});
+			var Properties = Backbone.RelationalModel.extend({});
+			var View = Backbone.RelationalModel.extend({
+				relations: [
+					{
+						type: Backbone.HasMany,
+						key: 'properties',
+						relatedModel: Properties,
+						collectionType: PropertiesCollection,
+						reverseRelation: {
+							type: Backbone.HasOne,
+							key: 'view'
+						}
+					}
+				]
+			});
+
+			var view = new View();
+
+			ok( view.get( 'properties' ) instanceof PropertiesCollection );
+			ok( eventsTriggered === 0 );
+		});
 
 		test( "Does not trigger add / remove events for existing models on bulk assignment", function() {
 			var house = new House({
 				id: 'house-100',
 				location: 'in the middle of the street',
-				occupants: [ { id : 'person-5' }, { id : 'person-6' } ]
+				occupants: [ { id : 'person-5', jobs: [ { id : 'job-22' } ] }, { id : 'person-6' } ]
 			});
 
 			var eventsTriggered = 0;
+
 			house
-				.bind( 'add:occupants', function(model) {
+				.on( 'add:occupants', function(model) {
 					ok( false, model.id + " should not be added" );
 					eventsTriggered++;
 				})
-				.bind( 'remove:occupants', function(model) {
+				.on( 'remove:occupants', function(model) {
 					ok( false, model.id + " should not be removed" );
 					eventsTriggered++;
 				});
 
+			house.get( 'occupants' ).at( 0 ).on( 'add:jobs', function( model ) {
+				ok( false, model.id + " should not be added" );
+				eventsTriggered++;
+			});
+
 			house.set( house.toJSON() );
+
 			ok( eventsTriggered === 0, "No add / remove events were triggered" )
 		});
 
@@ -2583,30 +3049,191 @@ $(document).ready(function() {
 			var removeEventsTriggered = 0;
 			var changeEventsTriggered = 0;
 
-		  house
-			/*.bind( 'all', function(ev, model) {
-				console.log('all', ev, model);
-			})*/
-			.bind( 'add:occupants', function(model) {
-				ok( model.id === 'person-7', "Only person-7 should be added: " + model.id + " being added" );
-				addEventsTriggered++;
-			})
-			.bind( 'remove:occupants', function(model) {
-				ok( model.id === 'person-6', "Only person-6 should be removed: " + model.id + " being removed" );
-				removeEventsTriggered++;
-			});
+			house
+//				.bind( 'all', function(ev, model) {
+//					console.log('all', ev, model);
+//				})
+				.on( 'add:occupants', function( model ) {
+					ok( model.id === 'person-7', "Only person-7 should be added: " + model.id + " being added" );
+					addEventsTriggered++;
+				})
+				.on( 'remove:occupants', function( model ) {
+					ok( model.id === 'person-6', "Only person-6 should be removed: " + model.id + " being removed" );
+					removeEventsTriggered++;
+				});
 
-			var nicknameUpdated = false;
-			house.get('occupants').bind( 'change:nickname', function(model) {
+			house.get( 'occupants' ).on( 'change:nickname', function( model ) {
 				ok( model.id === 'person-8', "Only person-8 should have it's nickname updated: " + model.id + " nickname updated" );
 				changeEventsTriggered++;
 			});
 
 			house.set( { occupants : [ { id : 'person-5', nickname : 'Jane'}, { id : 'person-7' }, { id : 'person-8', nickname : 'Phil' } ] } );
 
-			ok(addEventsTriggered == 1, "Exactly one add event was triggered (triggered "+addEventsTriggered+" events)");
-			ok(removeEventsTriggered == 1, "Exactly one remove event was triggered (triggered "+removeEventsTriggered+" events)");
-			ok(changeEventsTriggered == 1, "Exactly one change event was triggered (triggered "+changeEventsTriggered+" events)");
+			ok( addEventsTriggered == 1, "Exactly one add event was triggered (triggered " + addEventsTriggered + " events)" );
+			ok( removeEventsTriggered == 1, "Exactly one remove event was triggered (triggered " + removeEventsTriggered + " events)" );
+			ok( changeEventsTriggered == 1, "Exactly one change event was triggered (triggered " + changeEventsTriggered + " events)" );
+		});
+
+
+	module( "Performance", { setup: reset } );
+
+
+		test( "Creation and destruction", 0, function() {
+			var relatedModelAddedCount = 0;
+			Backbone.Relation.prototype._relatedModelAdded = function( model, coll, options ) {
+				// Allow 'model' to set up its relations, before calling 'tryAddRelated'
+				// (which can result in a call to 'addRelated' on a relation of 'model')
+				var dit = this;
+				model.queue( function() {
+					dit.tryAddRelated( model, options );
+				});
+				relatedModelAddedCount++;
+				//console.log( this, model, coll, options );
+			};
+
+			var relatedModelRemovedCount = 0;
+			Backbone.Relation.prototype._relatedModelRemoved = function( model, coll, options ) {
+				this.removeRelated( model, options );
+				relatedModelRemovedCount++;
+			};
+
+			var Child = Backbone.RelationalModel.extend({
+				url: '/child/'
+			});
+
+			var Parent = Backbone.RelationalModel.extend({
+				relations: [{
+					type: Backbone.HasMany,
+					key: 'children',
+					relatedModel: Child
+				}]
+			});
+
+			var Parents = Backbone.Collection.extend({
+				model: Parent
+			});
+
+			// bootstrap data
+			var data = [];
+			for ( var i = 1; i <= 300; i++ ) {
+				data.push({
+					name: 'parent-' + i,
+					children: [
+						{id: 'p-' + i + '-c1', name: 'child-1'},
+						{id: 'p-' + i + '-c2', name: 'child-2'},
+						{id: 'p-' + i + '-c3', name: 'child-3'}
+					]
+				});
+			}
+
+			// test 2 (run separetly)
+			Backbone.Relational.store.reset();
+			relatedModelAddedCount = 0;
+			console.log('loading test 2...');
+			var start = new Date();
+
+			data.forEach(function (parent) {
+				parent.children = parent.children.map(function (child) {
+					return new Child(child);
+				});
+			});
+
+			var parents = new Parents();
+			parents.on('reset', function () {
+				var end = new Date();
+				var secs = (end - start) / 1000;
+				console.log('data loaded in ' + secs + ', relatedModelAddedCount=' + relatedModelAddedCount );
+			});
+			parents.reset(data);
+
+			var Child = Backbone.RelationalModel.extend({
+				url: '/child/'
+			});
+
+			var Parent = Backbone.RelationalModel.extend({
+				relations: [{
+					type: Backbone.HasMany,
+					key: 'children',
+					relatedModel: Child,
+					reverseRelation: {
+						key: 'parent'
+					}
+				}]
+			});
+
+			var Parents = Backbone.Collection.extend({
+				model: Parent
+			});
+
+			// test 1
+			Backbone.Relational.store.reset();
+			relatedModelAddedCount = 0;
+			console.log('loading test 1...');
+			var start = new Date();
+
+			var parents = new Parents();
+			parents.on('reset', function () {
+				var end = new Date();
+				var secs = (end - start) / 1000;
+				console.log('data loaded in ' + secs + ', relatedModelAddedCount=' + relatedModelAddedCount );
+			});
+			parents.reset(data);
+
+			// test 2 (run separetly)
+			Backbone.Relational.store.reset();
+			relatedModelAddedCount = 0;
+			console.log('loading test 2...');
+			var start = new Date();
+
+			data.forEach(function (parent) {
+				parent.children = parent.children.map(function (child) {
+					return new Child(child);
+				});
+			});
+
+			var parents = new Parents();
+			parents.on('reset', function () {
+				var end = new Date();
+				var secs = (end - start) / 1000;
+				console.log('data loaded in ' + secs + ', relatedModelAddedCount=' + relatedModelAddedCount );
+			});
+			parents.reset(data);
+
+			var start = new Date();
+			relatedModelRemovedCount = 0;
+
+			parents.each( function( parent ) {
+				parent.get( 'children' ).each( function( child ) {
+					child.destroy();
+				});
+			});
+
+			var end = new Date();
+			var secs = (end - start) / 1000;
+			console.log('data removed in ' + secs + ', relatedModelRemovedCount=' + relatedModelRemovedCount );
+
+			// test 1
+			Backbone.Relational.store.reset();
+			relatedModelAddedCount = 0;
+			console.log('loading test 1...');
+			var start = new Date();
+
+			var parents = new Parents();
+			parents.on('reset', function () {
+				var end = new Date();
+				var secs = (end - start) / 1000;
+				console.log('data loaded in ' + secs + ', relatedModelAddedCount=' + relatedModelAddedCount );
+			});
+			parents.reset(data);
+
+			var start = new Date();
+			relatedModelRemovedCount = 0;
+
+			parents.remove( parents.models );
+
+			var end = new Date();
+			var secs = (end - start) / 1000;
+			console.log('data removed in ' + secs + ', relatedModelRemovedCount=' + relatedModelRemovedCount );
 		});
 
 });
